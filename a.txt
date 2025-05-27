@@ -1,0 +1,95 @@
+timedatectl set-timezone Asia/Jakarta
+pacman -Syy
+
+/dev/nvme0n1
+ - /dev/nvme0n1p1 for EFI
+ - /dev/nvme0n1p2 for Btrfs
+ # U can use fdisk, gdisk, parted, etc.
+
+mkfs.fat -F 32 -n EFI /dev/nvme0n1p1
+mkfs.btrfs -f -L arch /dev/nvme0n1p2
+
+mount /dev/nvme0n1p2 /mnt
+btrfs su cr /mnt/@
+btrfs su cr /mnt/@home
+btrfs su cr /mnt/@log
+btrfs su cr /mnt/@pkg
+btrfs su cr /mnt/@tmp
+btrfs su cr /mnt/@swap
+umount /mnt
+
+mount -o rw,noatime,ssd,compress=zstd:3,discard=async,space_cache=v2,subvol=@ /dev/nvme0n1p2 /mnt
+
+mkdir -p /mnt/{boot/efi,home,var/log,var/cache/pacman/pkg,tmp,swap}
+
+mount -o rw,noatime,ssd,compress=zstd:3,discard=async,space_cache=v2,subvol=@home      /dev/nvme0n1p2 /mnt/home
+mount -o rw,noatime,ssd,compress=zstd:3,discard=async,space_cache=v2,subvol=@log       /dev/nvme0n1p2 /mnt/var/log
+mount -o rw,noatime,ssd,compress=zstd:3,discard=async,space_cache=v2,subvol=@pkg       /dev/nvme0n1p2 /mnt/var/cache/pacman/pkg
+mount -o rw,noatime,ssd,compress=zstd:3,discard=async,space_cache=v2,subvol=@tmp       /dev/nvme0n1p2 /mnt/tmp
+mount -o rw,noatime,ssd,compress=zstd:3,discard=async,space_cache=v2,subvol=@swap      /dev/nvme0n1p2 /mnt/swap
+mount -o rw,noatime,fmask=0022,dmask=0022 /dev/nvme0n1p1 /mnt/boot/efi
+
+truncate -s 0 /mnt/swap/swapfile
+chattr +C /mnt/swap/swapfile
+fallocate -l 16G /mnt/swap/swapfile
+# dd if=/dev/zero of=/mnt/swap/swapfile bs=1M count=16384 status=none // only if fallocate failed
+chmod 0600 /mnt/swap/swapfile
+mkswap -L Swap /mnt/swap/swapfile
+swapon /mnt/swap/swapfile
+
+reflector -c Indonesia -a 6 -p https --sort rate --save /etc/pacman.d/mirrorlist
+
+pacstrap -K /mnt base base-devel linux linux-headers linux-firmware sof-firmware intel-ucode nvidia nvidia-utils efibootmgr btrfs-progs grub grub-btrfs reflector networkmanager pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber git rsync bluez bluez-utils nano fd wireless-regdb lm_sensors smartmontools timeshift
+
+genfstab -U /mnt >> /mnt/etc/fstab
+
+# Entering archlinux via chroot
+arch-chroot /mnt
+
+ln -sf /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
+hwclock --systohc
+
+# remove hashtag at en_US.UTF-8
+nano /etc/locale.gen
+locale-gen
+echo "LANG=en_US.UTF-8" >> /etc/locale.conf
+
+echo "archlinux" >> /etc/hostname
+nano /etc/hosts
+# add this into hosts
+
+# 127.0.0.1 localhost
+# ::1       localhost
+# 127.0.1.1 archlinux.localdomain archlinux
+
+# Set ROOT password
+passwd
+
+reflector -c Indonesia -a 6 -p https --sort rate --save /etc/pacman.d/mirrorlist
+pacman -S gnome-shell sddm gnome-control-center gnome-session gnome-settings-daemon nautilus gnome-backgrounds ptyxis
+
+grub-install --target=x86-64-efi --efi-directory=/boot/efi --bootloader-id=Grub
+nano /etc/default/grub
+# add nvidia-drm.modeset=1 to GRUB_CMDLINE_LINUX_DEFAULT
+grub-mkconfig -o /boot/grub/grub.cfg
+
+systemctl enable NetworkManager
+systemctl enable bluetooth
+systemctl enable sddm
+systemctl enable smartd
+systemctl enable systemd-timesyncd
+systemctl enable reflector.time
+systemctl enable fstrim.timer
+
+useradd -m -G wheel -c 'Garrix fans' user
+passwd user # set your user password
+
+export EDITOR=nano # or use 'EDITOR=nano visudo'
+visudo
+# ... uncomment line: %wheel ALL=(ALL:ALL) ALL (or %wheel ALL=(ALL) ALL)
+
+exit
+swapoff -a
+umount -R /mnt
+
+reboot
